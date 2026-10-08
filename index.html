@@ -697,6 +697,49 @@
     if (e.key === 'Enter' && e.target.tagName === 'INPUT') e.preventDefault();
   });
 
+  // 送信1回ごとの番号。同じ番号で送り直しても、Google側で二重に記録されない
+  function newId() {
+    return (window.crypto && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : Date.now() + '-' + Math.random().toString(36).slice(2);
+  }
+  let submitId = newId();
+
+  function wait(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
+  // 返事を受け取れなかったとき：Google側に「この番号は届いているか」を問い合わせる
+  async function checkResult(id) {
+    for (const ms of [2000, 4000]) {
+      await wait(ms);
+      try {
+        const res = await fetch(GAS_URL + '?check=' + encodeURIComponent(id));
+        const r = await res.json();
+        if (r.found) return r;
+      } catch (err) { /* 次の回でもう一度確かめる */ }
+    }
+    return null;
+  }
+
+  function handleResult(result, data) {
+    if (result.ok && result.sheet && result.mail) {
+      form.reset();
+      submitId = newId();
+      showDone(data, '');
+    } else if (result.ok && result.sheet) {
+      // メールだけ失敗：シートに記録済みなので、再送信させない（完了画面へ）
+      form.reset();
+      submitId = newId();
+      showDone(data, 'メール送信に失敗しました。スプレッドシートには記録されていますので、そちらをご確認のうえ、お客様に今回の打ち合わせの資料を送ってください。');
+    } else if (result.ok) {
+      // シートだけ失敗：入力内容を残して、もう一度送信してもらう
+      showStatus('スプレッドシートへの保存に失敗しました。メールには記録されています。\n入力内容は残っていますので、もう一度「送信する」を押してください。', 'ng');
+    } else {
+      showStatus('送信に失敗しました。入力内容は残っています。もう一度送信してください。', 'ng');
+    }
+  }
+
   form.addEventListener('submit', async function (e) {
     e.preventDefault();
 
@@ -710,30 +753,27 @@
     statusEl.hidden = true;
 
     const data = collect();
+    data.submitId = submitId;
     try {
-      // text/plain で送る（GAS側で JSON として読み取る）
-      const res = await fetch(GAS_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(data)
-      });
-      const result = await res.json();
-
-      if (result.ok && result.sheet && result.mail) {
-        form.reset();
-        showDone(data, '');
-      } else if (result.ok && result.sheet) {
-        // メールだけ失敗：シートに記録済みなので、再送信させない（完了画面へ）
-        form.reset();
-        showDone(data, 'メール送信に失敗しました。スプレッドシートには記録されていますので、そちらをご確認のうえ、お客様に今回の打ち合わせの資料を送ってください。');
-      } else if (result.ok) {
-        // シートだけ失敗：入力内容を残して、もう一度送信してもらう
-        showStatus('スプレッドシートへの保存に失敗しました。メールには記録されています。\n入力内容は残っていますので、もう一度「送信する」を押してください。（メールはもう1通届きます）', 'ng');
-      } else {
-        showStatus('送信に失敗しました。入力内容は残っています。もう一度送信してください。', 'ng');
+      let result;
+      try {
+        // text/plain で送る（GAS側で JSON として読み取る）
+        const res = await fetch(GAS_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(data)
+        });
+        result = await res.json();
+      } catch (err) {
+        btn.textContent = '送信結果を確認中…';
+        result = await checkResult(submitId);
       }
-    } catch (err) {
-      showStatus('送信結果を確認できませんでした。届いている可能性があります。もう一度送信する前に、スプレッドシートとメールを確認してください。入力内容は残っています。', 'ng');
+
+      if (result) {
+        handleResult(result, data);
+      } else {
+        showStatus('送信結果を確認できませんでした。入力内容は残っています。\nもう一度「送信する」を押してください。すでに届いている場合でも、二重には記録されません。', 'ng');
+      }
     } finally {
       btn.disabled = false;
       btn.textContent = '送信する';
