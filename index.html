@@ -168,6 +168,17 @@
 
   ::placeholder { color: #999999; opacity: 1; font-size: 14px; }
 
+  /* 日付欄：iPhoneでは日付が中央に寄るので、左詰めにする */
+  input[type="date"] { text-align: left; }
+  input[type="date"]::-webkit-date-and-time-value {
+    text-align: left;
+    margin: 0;
+  }
+  /* 日付欄：1列表示（840px未満）では、横幅を3分の2にする */
+  @media (max-width: 839px) {
+    input[type="date"] { width: 66.666%; }
+  }
+
   input:focus, select:focus, textarea:focus {
     outline: none;
     border-color: var(--accent);
